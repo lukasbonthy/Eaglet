@@ -69,9 +69,16 @@ if jorbis_src.exists():
 (root / "src/wasm-gc-teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformScreenRecord.java").write_text(
 '''package net.lax1dude.eaglercraft.v1_8.internal;
 
+import org.teavm.jso.browser.Window;
+import org.teavm.jso.dom.html.HTMLCanvasElement;
+import org.teavm.jso.webaudio.MediaStream;
+
 import net.lax1dude.eaglercraft.v1_8.recording.EnumScreenRecordingCodec;
 
 public class PlatformScreenRecord {
+    static void initContext(Window win, HTMLCanvasElement canvas) {}
+    static void captureFrameHook() {}
+    public static MediaStream getMic() { return null; }
     public static boolean isSupported() { return false; }
     public static boolean isCodecSupported(EnumScreenRecordingCodec codec) { return false; }
     public static void setGameVolume(float volume) {}
@@ -88,10 +95,16 @@ public class PlatformScreenRecord {
 (root / "src/wasm-gc-teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformVoiceClient.java").write_text(
 '''package net.lax1dude.eaglercraft.v1_8.internal;
 
+import org.teavm.jso.webaudio.AudioNode;
+
 import net.lax1dude.eaglercraft.v1_8.EaglercraftUUID;
 import net.lax1dude.eaglercraft.v1_8.voice.EnumVoiceChannelReadyState;
 
 public class PlatformVoiceClient {
+    static void initialize() {}
+    static void handleJSEvent(PlatformRuntime.JSEagRuntimeEvent evt) {}
+    static void addRecordingDest(AudioNode destNode) {}
+    static void removeRecordingDest(AudioNode destNode) {}
     public static boolean isSupported() { return false; }
     public static void setICEServers(String[] urls) {}
     public static void activateVoice(boolean talk) {}
