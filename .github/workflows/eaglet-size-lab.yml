@@ -2,6 +2,8 @@ name: Eaglet size lab
 on:
   push:
     branches: [size-lab]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
