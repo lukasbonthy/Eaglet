@@ -6,7 +6,6 @@ root = Path("workspace")
 p = root / "target_teavm_wasm_gc/build.gradle.kts"
 s = p.read_text()
 s = s.replace('implementation(libs.jorbis)\n', '')
-s = s.replace('debugInformation = true', 'debugInformation = false')
 s = s.replace('disassembly = true', 'disassembly = false')
 p.write_text(s)
 
