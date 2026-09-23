@@ -8,6 +8,221 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - name: Smoke test
-        run: echo "actions works"
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Eaglercraft-Archive/EaglercraftX-1_8-workspace
+          ref: master
+          path: workspace
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Apply Eaglet compile-time size cuts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("workspace")
+
+          # --- Build configuration ---
+          p = root / "target_teavm_wasm_gc/build.gradle.kts"
+          s = p.read_text()
+          s = s.replace('implementation(libs.jorbis)\n', '')
+          s = s.replace('debugInformation = true', 'debugInformation = false')
+          s = s.replace('disassembly = true', 'disassembly = false')
+          p.write_text(s)
+
+          # --- 1. Remove embedded JOrbis fallback ---
+          p = root / "src/wasm-gc-teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformAudio.java"
+          s = p.read_text()
+          s = s.replace('import net.lax1dude.eaglercraft.v1_8.internal.wasm_gc_teavm.JOrbisAudioBufferDecoder;\n', '')
+          s = s.replace('\tprivate static boolean oggSupport = false;\n', '')
+
+          init_start = s.index('\tstatic void initialize() {')
+          get_ctx = s.index('\n\t@Import(module = "platformAudio", name = "getContext")', init_start)
+          replacement = '''\tstatic void initialize() {
+\t\taudioctx = getContext();
+\t\tif(audioctx == null) {
+\t\t\tlogger.error("Could not initialize audio context!");
+\t\t\treturn;
+\t\t}
+
+\t\tif(((WASMGCClientConfigAdapter)PlatformRuntime.getClientConfigAdapter()).isKeepAliveHackTeaVM()) {
+\t\t\tbyte[] silenceFile = PlatformAssets.getResourceBytes("/assets/eagler/silence_loop.wav");
+\t\t\tif (silenceFile != null) {
+\t\t\t\tMemoryStack.push();
+\t\t\t\ttry {
+\t\t\t\t\tint len = silenceFile.length;
+\t\t\t\t\tAddress addr = MemoryStack.malloc(len);
+\t\t\t\t\tWASMGCDirectArrayCopy.memcpy(addr, silenceFile, 0, len);
+\t\t\t\t\tinitKeepAliveHack(addr, len);
+\t\t\t\t}finally {
+\t\t\t\t\tMemoryStack.pop();
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t}
+'''
+          s = s[:init_start] + replacement + s[get_ctx:]
+
+          dec_start = s.index('\tprivate static AudioBuffer decodeAudioData(byte[] data, String errorFileName) {')
+          dec_end = s.index('\n\t@Import(module = "platformAudio", name = "decodeAudioBrowser")', dec_start)
+          replacement = '''\tprivate static AudioBuffer decodeAudioData(byte[] data, String errorFileName) {
+\t\tif(data == null) {
+\t\t\treturn null;
+\t\t}
+\t\tMemoryStack.push();
+\t\ttry {
+\t\t\treturn decodeAudioBrowserAsync(WASMGCDirectArrayConverter.byteArrayToStackU8Array(data),
+\t\t\t\t\tBetterJSStringConverter.stringToJS(errorFileName));
+\t\t}finally {
+\t\t\tMemoryStack.pop();
+\t\t}
+\t}
+'''
+          s = s[:dec_start] + replacement + s[dec_end:]
+          p.write_text(s)
+
+          # The source file imports JOrbis types directly, so remove it from this target.
+          (root / "src/wasm-gc-teavm/java/net/lax1dude/eaglercraft/v1_8/internal/wasm_gc_teavm/JOrbisAudioBufferDecoder.java").unlink()
+
+          # --- 2 + 6. Compile out screen recording / video encoding ---
+          (root / "src/wasm-gc-teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformScreenRecord.java").write_text(r'''package net.lax1dude.eaglercraft.v1_8.internal;
+
+import net.lax1dude.eaglercraft.v1_8.recording.EnumScreenRecordingCodec;
+
+public class PlatformScreenRecord {
+\tpublic static boolean isSupported() { return false; }
+\tpublic static boolean isCodecSupported(EnumScreenRecordingCodec codec) { return false; }
+\tpublic static void setGameVolume(float volume) {}
+\tpublic static void setMicrophoneVolume(float volume) {}
+\tpublic static void startRecording(ScreenRecordParameters params) {}
+\tpublic static void endRecording() {}
+\tpublic static boolean isRecording() { return false; }
+\tpublic static boolean isMicVolumeLocked() { return false; }
+\tpublic static boolean isVSyncLocked() { return false; }
+}
+''')
+
+          # --- 3. Compile out voice chat ---
+          (root / "src/wasm-gc-teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformVoiceClient.java").write_text(r'''package net.lax1dude.eaglercraft.v1_8.internal;
+
+import net.lax1dude.eaglercraft.v1_8.EaglercraftUUID;
+import net.lax1dude.eaglercraft.v1_8.voice.EnumVoiceChannelReadyState;
+
+public class PlatformVoiceClient {
+\tpublic static boolean isSupported() { return false; }
+\tpublic static void setICEServers(String[] urls) {}
+\tpublic static void activateVoice(boolean talk) {}
+\tpublic static void initializeDevices() {}
+\tpublic static void tickVoiceClient() {}
+\tpublic static void setMicVolume(float val) {}
+\tpublic static EnumVoiceChannelReadyState getReadyState() { return EnumVoiceChannelReadyState.NONE; }
+\tpublic static void signalConnect(EaglercraftUUID peerId, boolean offer) {}
+\tpublic static void signalDescription(EaglercraftUUID peerId, String descJSON) {}
+\tpublic static void signalDisconnect(EaglercraftUUID peerId, boolean quiet) {}
+\tpublic static void makePeerGlobal(EaglercraftUUID peerId) {}
+\tpublic static void makePeerProximity(EaglercraftUUID peerId) {}
+\tpublic static void setVoiceProximity(int prox) {}
+\tpublic static void updateVoicePosition(EaglercraftUUID uuid, double x, double y, double z) {}
+\tpublic static void mutePeer(EaglercraftUUID peerId, boolean muted) {}
+\tpublic static void signalICECandidate(EaglercraftUUID peerId, String candidate) {}
+\tpublic static void setVoiceListenVolume(float f) {}
+}
+''')
+
+          # --- 4. Remove WebRTC LAN/shared-world transport, keep normal WebSocket multiplayer ---
+          (root / "src/wasm-gc-teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformWebRTC.java").write_text(r'''package net.lax1dude.eaglercraft.v1_8.internal;
+
+import java.util.Collections;
+import java.util.List;
+
+import net.lax1dude.eaglercraft.v1_8.sp.lan.LANPeerEvent;
+
+public class PlatformWebRTC {
+\tpublic static void initialize() {}
+\tpublic static boolean supported() { return false; }
+\tpublic static void runScheduledTasks() {}
+\tpublic static void startRTCLANClient() {}
+\tpublic static int clientLANReadyState() { return 0; }
+\tpublic static void clientLANCloseConnection() {}
+\tpublic static void clientLANSendPacket(byte[] pkt) {}
+\tpublic static byte[] clientLANReadPacket() { return null; }
+\tpublic static List<byte[]> clientLANReadAllPacket() { return Collections.emptyList(); }
+\tpublic static void clientLANSetICEServersAndConnect(String[] servers) {}
+\tpublic static void clearLANClientState() {}
+\tpublic static String clientLANAwaitICECandidate() { return null; }
+\tpublic static String clientLANAwaitDescription() { return null; }
+\tpublic static boolean clientLANAwaitChannel() { return false; }
+\tpublic static boolean clientLANClosed() { return true; }
+\tpublic static void clientLANSetICECandidate(String candidate) {}
+\tpublic static void clientLANSetDescription(String description) {}
+\tpublic static void startRTCLANServer() {}
+\tpublic static void serverLANInitializeServer(String[] servers) {}
+\tpublic static void serverLANCloseServer() {}
+\tpublic static void serverLANCreatePeer(String peer) {}
+\tpublic static LANPeerEvent serverLANGetEvent(String peer) { return null; }
+\tpublic static List<LANPeerEvent> serverLANGetAllEvent(String peer) { return Collections.emptyList(); }
+\tpublic static void serverLANWritePacket(String peer, byte[] data) {}
+\tpublic static void serverLANPeerICECandidates(String peer, String iceCandidates) {}
+\tpublic static void serverLANPeerDescription(String peer, String description) {}
+\tpublic static void serverLANPeerMapIPC(String peer, String ipcChannel) {}
+\tpublic static void serverLANDisconnectPeer(String peer) {}
+\tpublic static int countPeers() { return 0; }
+}
+''')
+
+          # Replace bulky browser implementations with tiny runtime no-op initializers.
+          (root / "src/wasm-gc-teavm/js/platformScreenRecord.js").write_text(r'''
+function initializePlatfScreenRecord(screenRecordImports) {}
+function initializeNoPlatfScreenRecord(screenRecordImports) {}
+''')
+          (root / "src/wasm-gc-teavm/js/platformVoiceClient.js").write_text(r'''
+function initializePlatfVoiceClient(voiceClientImports) {}
+function initializeNoPlatfVoiceClient(voiceClientImports) {}
+''')
+          (root / "src/wasm-gc-teavm/js/platformWebRTC.js").write_text(r'''
+function initializePlatfWebRTC(webrtcImports) { serverLANPeerPassIPCFunc = null; }
+function initializeNoPlatfWebRTC(webrtcImports) { serverLANPeerPassIPCFunc = null; }
+''')
+          (root / "src/wasm-gc-teavm/js/fix-webm-duration.js").write_text('')
+
+          # JOrbis probe is now dead; keep-alive WAV stays because the optional keepAliveHack still exists.
+          try:
+              (root / "desktopRuntime/resources/assets/eagler/audioctx_test_ogg.dat").unlink()
+          except FileNotFoundError:
+              pass
+          PY
+
+      - name: Build WASM-GC
+        run: |
+          cd workspace
+          chmod +x gradlew
+          ./gradlew target_teavm_wasm_gc:makeMainWasmClientBundle --no-daemon
+
+      - name: Show output sizes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in [
+              Path("workspace/target_teavm_wasm_gc/javascript/classes.wasm"),
+              Path("workspace/target_teavm_wasm_gc/javascript/eagruntime.js"),
+              Path("workspace/target_teavm_wasm_gc/javascript_dist/assets.epw"),
+          ]:
+              print(p.stat().st_size if p.exists() else "MISSING", p)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eaglet-size-cut-build
+          path: |
+            workspace/target_teavm_wasm_gc/javascript/classes.wasm
+            workspace/target_teavm_wasm_gc/javascript/eagruntime.js
+            workspace/target_teavm_wasm_gc/javascript_dist/assets.epw
+          if-no-files-found: error
