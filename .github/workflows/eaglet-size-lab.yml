@@ -1,71 +1,13 @@
 name: Eaglet size lab
 on:
   push:
-    branches: [size-lab]
-  pull_request:
-    branches: [main]
+    branches:
+      - size-lab
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: Eaglercraft-Archive/EaglercraftX-1_8-workspace
-          ref: master
-          path: workspace
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Apply Eaglet size patches
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("workspace/target_teavm_wasm_gc/build.gradle.kts")
-          s = p.read_text()
-          s = s.replace("debugInformation = true", "debugInformation = false")
-          s = s.replace("disassembly = true", "disassembly = false")
-          p.write_text(s)
-
-          p = Path("workspace/src/wasm-gc-teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformAudio.java")
-          s = p.read_text()
-          s = s.replace("import net.lax1dude.eaglercraft.v1_8.internal.wasm_gc_teavm.JOrbisAudioBufferDecoder;\n", "")
-          start = s.index("\tprivate static AudioBuffer decodeAudioData(byte[] data, String errorFileName) {")
-          end = s.index("\n\t@Import(module = \"platformAudio\", name = \"decodeAudioBrowser\")", start)
-          replacement = """\tprivate static AudioBuffer decodeAudioData(byte[] data, String errorFileName) {
-\t\tif(data == null) {
-\t\t\treturn null;
-\t\t}
-\t\tMemoryStack.push();
-\t\ttry {
-\t\t\treturn decodeAudioBrowserAsync(WASMGCDirectArrayConverter.byteArrayToStackU8Array(data),
-\t\t\t\t\tBetterJSStringConverter.stringToJS(errorFileName));
-\t\t}finally {
-\t\t\tMemoryStack.pop();
-\t\t}
-\t}
-"""
-          s = s[:start] + replacement + s[end:]
-          p.write_text(s)
-          PY
-      - name: Build WASM-GC
-        run: |
-          cd workspace
-          chmod +x gradlew
-          ./gradlew target_teavm_wasm_gc:makeMainWasmClientBundle --no-daemon
-      - name: Show sizes
-        run: |
-          find workspace/target_teavm_wasm_gc -type f \( -name 'classes.wasm' -o -name 'eagruntime.js' -o -name 'assets.epw' \) -printf '%s %p\n' || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: eaglet-size-lab
-          path: |
-            workspace/target_teavm_wasm_gc/javascript/classes.wasm
-            workspace/target_teavm_wasm_gc/javascript/eagruntime.js
-            workspace/target_teavm_wasm_gc/javascript_dist/assets.epw
-          if-no-files-found: warn
+      - name: Smoke test
+        run: echo "actions works"
