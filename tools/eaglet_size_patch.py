@@ -156,17 +156,20 @@ public class PlatformWebRTC {
 
 # Tiny JS no-op implementations so the runtime initializer still has the symbols it expects.
 (root / "src/wasm-gc-teavm/js/platformScreenRecord.js").write_text(
-'''function initializePlatfScreenRecord(screenRecordImports) {}
+'''const platfScreenRecordName = "platformScreenRecord";
+function initializePlatfScreenRecord(screenRecordImports) {}
 function initializeNoPlatfScreenRecord(screenRecordImports) {}
 ''')
 
 (root / "src/wasm-gc-teavm/js/platformVoiceClient.js").write_text(
-'''function initializePlatfVoiceClient(voiceClientImports) {}
+'''const platfVoiceClientName = "platformVoiceClient";
+function initializePlatfVoiceClient(voiceClientImports) {}
 function initializeNoPlatfVoiceClient(voiceClientImports) {}
 ''')
 
 (root / "src/wasm-gc-teavm/js/platformWebRTC.js").write_text(
-'''function initializePlatfWebRTC(webrtcImports) { serverLANPeerPassIPCFunc = null; }
+'''const platfWebRTCName = "platformWebRTC";
+function initializePlatfWebRTC(webrtcImports) { serverLANPeerPassIPCFunc = null; }
 function initializeNoPlatfWebRTC(webrtcImports) { serverLANPeerPassIPCFunc = null; }
 ''')
 
