@@ -1,0 +1,93 @@
+name: Eaglet JS ultra size lab
+on:
+  push:
+    branches:
+      - size-lab
+  workflow_dispatch:
+
+jobs:
+  build-js:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout EaglercraftX u53 source package
+        uses: actions/checkout@v4
+        with:
+          repository: dryedtree/eaglercraft1.8.8
+          ref: 332a7bb11fe2f26e047eb43c87e7633b8d757b19
+          path: sourcepack
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg brotli
+          npm install --no-save terser@5.49.0
+
+      - name: Prepare Minecraft 1.8.8 build inputs
+        shell: bash
+        run: |
+          set -e
+          mkdir -p sourcepack/mcp918
+          curl -L --retry 4 --fail https://raw.githubusercontent.com/leijurv/MineBot/master/mcp918.zip -o sourcepack/mcp918/mcp918.zip
+          curl -L --retry 4 --fail https://launcher.mojang.com/v1/objects/0983f08be6a4e624f5d85689d1aca869ed99c738/client.jar -o sourcepack/mcp918/1.8.8.jar
+          curl -L --retry 4 --fail https://launchermeta.mojang.com/v1/packages/f6ad102bcaa53b1a58358f16e376d548d44933ec/1.8.json -o sourcepack/mcp918/1.8.json
+          python3 - <<'PY'
+          import json, os
+          root = os.environ["GITHUB_WORKSPACE"]
+          with open(os.path.join(root, "sourcepack", "buildtools_config.json"), "w") as f:
+              json.dump({
+                  "temporary_directory": os.path.join(root, "sourcepack", ".eagler_tmp"),
+                  "workspace_directory": os.path.join(root, "workspace")
+              }, f)
+          PY
+
+      - name: Generate official u53 workspace
+        shell: bash
+        run: |
+          set -e
+          cd sourcepack
+          python3 -c 'print("\n" * 200)' | java -Xmx2G -jar buildtools/BuildTools.jar init
+          java -Xmx2G -jar buildtools/BuildTools.jar workspace
+          test -f ../workspace/target_teavm_javascript/build.gradle.kts
+          grep -q 'projectOriginVersion = "u53"' ../workspace/src/main/java/net/lax1dude/eaglercraft/v1_8/EaglercraftVersion.java
+
+      - name: Apply Eaglet JS size cuts
+        run: python3 tools/eaglet_js_size_patch.py
+
+      - name: Build aggressive TeaVM JavaScript
+        run: |
+          cd workspace
+          chmod +x gradlew
+          ./gradlew target_teavm_javascript:generateJavaScript --no-daemon
+
+      - name: Locate and minify classes.js
+        shell: bash
+        run: |
+          set -e
+          mkdir -p out
+          JS="$(find workspace/target_teavm_javascript -type f -name classes.js -printf '%s %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
+          test -n "$JS"
+          cp "$JS" out/classes.aggressive.js
+          npx terser out/classes.aggressive.js --compress passes=10 --mangle --ecma 2020 --output out/classes.min.js
+          node --check out/classes.min.js
+          brotli -q 11 -w 24 -f out/classes.aggressive.js -o out/classes.aggressive.js.br
+          brotli -q 11 -w 24 -f out/classes.min.js -o out/classes.min.js.br
+          gzip -9 -c out/classes.min.js > out/classes.min.js.gz
+          wc -c out/classes.aggressive.js out/classes.min.js out/classes.aggressive.js.br out/classes.min.js.br out/classes.min.js.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eaglet-u53-aggressive-js
+          path: out/
+          if-no-files-found: error
