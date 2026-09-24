@@ -8,7 +8,7 @@ s = p.read_text()
 s = s.replace('implementation(libs.jorbis)\n', '')
 s = s.replace('sourceMap = true', 'sourceMap = false')
 s = s.replace('optimization = OptimizationLevel.BALANCED // Change to "AGGRESSIVE" for release',
-              'optimization = OptimizationLevel.AGGRESSIVE')
+              'optimization = OptimizationLevel.BALANCED')
 # Remove the legacy ES6 compatibility shim injection. Eaglet targets modern browsers.
 marker = 'tasks.named<GenerateJavaScriptTask>("generateJavaScript") {'
 if marker in s:
