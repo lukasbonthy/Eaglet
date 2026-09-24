@@ -1,0 +1,90 @@
+name: Eaglet u53 size lab
+on:
+  push:
+    branches:
+      - size-lab
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout EaglercraftX u53 source package
+        uses: actions/checkout@v4
+        with:
+          repository: dryedtree/eaglercraft1.8.8
+          ref: 332a7bb11fe2f26e047eb43c87e7633b8d757b19
+          path: sourcepack
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Prepare Minecraft 1.8.8 build inputs
+        shell: bash
+        run: |
+          set -e
+          mkdir -p sourcepack/mcp918
+          curl -L --retry 4 --fail             https://raw.githubusercontent.com/leijurv/MineBot/master/mcp918.zip             -o sourcepack/mcp918/mcp918.zip
+          curl -L --retry 4 --fail             https://launcher.mojang.com/v1/objects/0983f08be6a4e624f5d85689d1aca869ed99c738/client.jar             -o sourcepack/mcp918/1.8.8.jar
+          curl -L --retry 4 --fail             https://launchermeta.mojang.com/v1/packages/f6ad102bcaa53b1a58358f16e376d548d44933ec/1.8.json             -o sourcepack/mcp918/1.8.json
+          python3 - <<'PY'
+          import json, os
+          root = os.environ["GITHUB_WORKSPACE"]
+          cfg = {
+              "temporary_directory": os.path.join(root, "sourcepack", ".eagler_tmp"),
+              "workspace_directory": os.path.join(root, "workspace")
+          }
+          with open(os.path.join(root, "sourcepack", "buildtools_config.json"), "w") as f:
+              json.dump(cfg, f)
+          PY
+
+      - name: Generate official u53 workspace
+        shell: bash
+        run: |
+          set -e
+          cd sourcepack
+          python3 -c 'print("\n" * 200)' | java -Xmx2G -jar buildtools/BuildTools.jar init
+          java -Xmx2G -jar buildtools/BuildTools.jar workspace
+          test -f ../workspace/target_teavm_wasm_gc/build.gradle.kts
+          test -f ../workspace/src/main/java/net/lax1dude/eaglercraft/v1_8/EaglercraftVersion.java
+          grep -q 'projectOriginVersion = "u53"' ../workspace/src/main/java/net/lax1dude/eaglercraft/v1_8/EaglercraftVersion.java
+
+      - name: Apply Eaglet size cuts 1-4 and 6
+        run: python3 tools/eaglet_size_patch.py
+
+      - name: Build u53 WASM-GC
+        run: |
+          cd workspace
+          chmod +x gradlew
+          ./gradlew target_teavm_wasm_gc:makeMainWasmClientBundle --no-daemon
+
+      - name: Show output sizes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in [
+              Path("workspace/target_teavm_wasm_gc/javascript/classes.wasm"),
+              Path("workspace/target_teavm_wasm_gc/javascript/eagruntime.js"),
+              Path("workspace/target_teavm_wasm_gc/javascript_dist/assets.epw"),
+          ]:
+              print(p.stat().st_size if p.exists() else "MISSING", p)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eaglet-u53-size-cut-build
+          path: |
+            workspace/target_teavm_wasm_gc/javascript/classes.wasm
+            workspace/target_teavm_wasm_gc/javascript/eagruntime.js
+            workspace/target_teavm_wasm_gc/javascript_dist/assets.epw
+          if-no-files-found: error
