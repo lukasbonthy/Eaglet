@@ -268,3 +268,157 @@ public class LANServerController {
     public static boolean supported() { return false; }
 }
 ''')
+
+
+# --- Ultra JS-only cuts: direct launcher, no boot menu/update UI/debug popup/crash UI ---
+
+# Hard-disable optional launcher/update features in the JS config adapter so TeaVM can fold callers.
+p = root / "src/teavm/java/net/lax1dude/eaglercraft/v1_8/internal/teavm/TeaVMClientConfigAdapter.java"
+s = p.read_text()
+s = s.replace('public boolean isShowBootMenuOnLaunch() {\n\t\treturn showBootMenuOnLaunch;\n\t}',
+              'public boolean isShowBootMenuOnLaunch() {\n\t\treturn false;\n\t}')
+s = s.replace('public boolean isBootMenuBlocksUnsignedClients() {\n\t\treturn bootMenuBlocksUnsignedClients;\n\t}',
+              'public boolean isBootMenuBlocksUnsignedClients() {\n\t\treturn false;\n\t}')
+s = s.replace('public boolean isAllowBootMenu() {\n\t\treturn allowBootMenu;\n\t}',
+              'public boolean isAllowBootMenu() {\n\t\treturn false;\n\t}')
+s = s.replace('public boolean allowUpdateSvc() {\n\t\treturn isAllowUpdateSvc;\n\t}',
+              'public boolean allowUpdateSvc() {\n\t\treturn false;\n\t}')
+s = s.replace('public boolean allowUpdateDL() {\n\t\treturn isAllowUpdateDL;\n\t}',
+              'public boolean allowUpdateDL() {\n\t\treturn false;\n\t}')
+s = s.replace('public boolean isEnableDownloadOfflineButton() {\n\t\treturn isEnableDownloadOfflineButton;\n\t}',
+              'public boolean isEnableDownloadOfflineButton() {\n\t\treturn false;\n\t}')
+s = s.replace('public boolean isAllowVoiceClient() {\n\t\treturn allowVoiceClient;\n\t}',
+              'public boolean isAllowVoiceClient() {\n\t\treturn false;\n\t}')
+p.write_text(s)
+
+# Signed-client updater/installer is not needed by the standalone Eaglet build.
+(root / "src/teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformUpdateSvc.java").write_text(
+'''package net.lax1dude.eaglercraft.v1_8.internal;
+
+import net.lax1dude.eaglercraft.v1_8.update.UpdateCertificate;
+import net.lax1dude.eaglercraft.v1_8.update.UpdateProgressStruct;
+import net.lax1dude.eaglercraft.v1_8.update.UpdateResultObj;
+
+public class PlatformUpdateSvc {
+    public static Thread updateThread = null;
+    private static final UpdateProgressStruct progressStruct = new UpdateProgressStruct();
+    public static boolean supported() { return false; }
+    public static void initialize() {}
+    public static byte[] getClientSignatureData() { return null; }
+    public static byte[] getClientBundleData() { return null; }
+    public static void startClientUpdateFrom(UpdateCertificate clientUpdate) {}
+    public static UpdateProgressStruct getUpdatingStatus() { return progressStruct; }
+    public static UpdateResultObj getUpdateResult() { return null; }
+    public static void setUpdateResultTeaVM(UpdateResultObj obj) {}
+    public static void installSignedClient(UpdateCertificate clientCert, byte[] clientPayload, boolean setDefault, boolean setTimeout) {}
+    public static void quine(String filename, byte[] cert, byte[] data, String date) {}
+    public static void quine(UpdateCertificate clientUpdate, byte[] data) {}
+}
+''')
+
+# Debug console popup is optional and keeps a lot of DOM/log buffering code reachable.
+(root / "src/teavm/java/net/lax1dude/eaglercraft/v1_8/internal/teavm/DebugConsoleWindow.java").write_text(
+'''package net.lax1dude.eaglercraft.v1_8.internal.teavm;
+
+import org.teavm.jso.browser.Window;
+
+public class DebugConsoleWindow {
+    public static Window parent = null;
+    public static Window logger = null;
+    public static void initialize(Window parentWindow) { parent = parentWindow; }
+    public static void removeEventListeners() {}
+    public static void showDebugConsole() {}
+    public static void addLogMessage(String text, boolean isErr) {}
+    public static void destroyWindow() {}
+    public static boolean isShowingDebugConsole() { return false; }
+}
+''')
+
+# Replace the huge generic launcher/crash UI with the tiny direct Eaglet launcher.
+(root / "src/teavm/java/net/lax1dude/eaglercraft/v1_8/internal/teavm/ClientMain.java").write_text(
+'''package net.lax1dude.eaglercraft.v1_8.internal.teavm;
+
+import org.teavm.jso.JSBody;
+import org.teavm.jso.JSObject;
+import org.teavm.jso.browser.Window;
+import org.teavm.jso.dom.html.HTMLElement;
+
+import net.lax1dude.eaglercraft.v1_8.EagRuntime;
+import net.lax1dude.eaglercraft.v1_8.internal.teavm.opts.JSEaglercraftXOptsRoot;
+import net.minecraft.client.main.Main;
+
+public class ClientMain {
+
+    @JSBody(script = "return (typeof eaglercraftXOpts === \\"undefined\\") ? null : (typeof eaglercraftXOpts === \\"string\\" ? JSON.parse(eaglercraftXOpts) : eaglercraftXOpts);")
+    private static native JSObject getEaglerXOpts();
+
+    public static void _main() {
+        JSObject raw = getEaglerXOpts();
+        if(raw == null) {
+            throw new RuntimeException("eaglercraftXOpts is undefined");
+        }
+        JSEaglercraftXOptsRoot opts = (JSEaglercraftXOptsRoot)raw;
+        configRootElementId = opts.getContainer();
+        String assets = opts.getAssetsURI();
+        if(configRootElementId == null || assets == null) {
+            throw new RuntimeException("container/assetsURI missing");
+        }
+        configEPKFiles = new EPKFileEntry[] { new EPKFileEntry(assets, "") };
+        configLocalesFolder = "lang";
+        ((TeaVMClientConfigAdapter)TeaVMClientConfigAdapter.instance).loadNative(opts);
+        EagRuntime.create();
+        Main.appMain();
+    }
+
+    public static class EPKFileEntry {
+        public final String url;
+        public final String path;
+        public EPKFileEntry(String url, String path) {
+            this.url = url;
+            this.path = path;
+        }
+    }
+
+    public static String configRootElementId = null;
+    public static HTMLElement configRootElement = null;
+    public static EPKFileEntry[] configEPKFiles = null;
+    public static String configLocalesFolder = "lang";
+
+    public static HTMLElement integratedServerCrashPanel = null;
+    public static boolean integratedServerCrashPanelShowing = false;
+
+    public static void showIntegratedServerCrashReportOverlay(String report, int x, int y, int w, int h) {}
+    public static void hideIntegratedServerCrashReportOverlay() { integratedServerCrashPanelShowing = false; }
+
+    public static void removeErrorHandler(Window win) {}
+    public static void showCrashScreen(String message) {}
+    public static void showCrashScreen(String message, Throwable t) {}
+    public static void showIncompatibleScreen(String message) {}
+    public static void showContextLostScreen(String message) {}
+}
+''')
+
+# Platform runtime: remove modern-browser compatibility diagnostics, debug popup init,
+# boot-menu checks, and the old WebM duration shim call.
+p = root / "src/teavm/java/net/lax1dude/eaglercraft/v1_8/internal/PlatformRuntime.java"
+s = p.read_text()
+s = s.replace('\t\tDebugConsoleWindow.initialize(win);\n', '')
+s = s.replace('\t\tboolean allowBootMenu = teavmCfg.isAllowBootMenu();\n', '\t\tboolean allowBootMenu = false;\n')
+s = s.replace('\t\tFixWebMDurationJS.checkOldScriptStillLoaded();\n', '')
+start = s.find('\t\tES6ShimStatus shimStatus = ES6ShimStatus.getRuntimeStatus();')
+end = s.find('\t\tTeaVMBlobURLManager.initialize();', start)
+if start != -1 and end != -1:
+    s = s[:start] + '\t\tTeaVMBlobURLManager.initialize();\n' + s[end + len('\t\tTeaVMBlobURLManager.initialize();\n'):]
+boot_block = '''\t\tif(allowBootMenu && BootMenuEntryPoint.checkShouldLaunchFlag(win)) {
+\t\t\tlogger.info("Boot menu enable flag is set, entering boot menu...");
+\t\t\tenterBootMenu(BootMenuEntryPoint.wasManuallyInvoked);
+\t\t}
+
+'''
+s = s.replace(boot_block, '')
+s = s.replace('''\t\tif(allowBootMenu) {
+\t\t\tcheckBootMenu();
+\t\t}
+
+''', '')
+p.write_text(s)
